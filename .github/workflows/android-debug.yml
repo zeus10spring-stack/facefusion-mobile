@@ -22,8 +22,67 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Check required native libraries
+      - name: Install Android SDK components
+        run: sdkmanager 'platforms;android-35' 'build-tools;34.0.0'
+
+      - name: Download matching release and extract native libraries
         run: |
-          echo 'This repository does not include the required native libraries.'
-          echo 'A trusted, compatible prebuiltNativeDir must be prepared before the APK build can run.'
-          exit 1
+          python3 - <<'PY'
+          import json, urllib.request, zipfile, pathlib
+          api = 'https://api.github.com/repos/AbrahamPaulJ/facefusion-mobile/releases/tags/v0.9.34'
+          req = urllib.request.Request(api, headers={'User-Agent': 'FaceFusion-debug-build'})
+          with urllib.request.urlopen(req) as r:
+              release = json.load(r)
+          assets = [a for a in release.get('assets', []) if a['name'].endswith('-release.apk')]
+          if not assets:
+              raise SystemExit('No release APK asset found for v0.9.34')
+          asset = assets[0]
+          req = urllib.request.Request(asset['browser_download_url'], headers={'User-Agent': 'FaceFusion-debug-build'})
+          with urllib.request.urlopen(req) as r, open('official.apk', 'wb') as f:
+              f.write(r.read())
+          out = pathlib.Path('native-libraries/arm64-v8a')
+          out.mkdir(parents=True, exist_ok=True)
+          wanted = {'libffnative.so', 'libc++_shared.so'}
+          with zipfile.ZipFile('official.apk') as z:
+              found = []
+              for name in z.namelist():
+                  if not name.startswith('lib/arm64-v8a/'):
+                      continue
+                  base = name.rsplit('/', 1)[-1]
+                  if base in wanted or (base.startswith('libQnn') and base.endswith('.so')):
+                      (out / base).write_bytes(z.read(name))
+                      found.append(base)
+          missing = wanted - set(found)
+          if missing or not any(n.startswith('libQnn') for n in found):
+              raise SystemExit(f'Required native libraries missing: {missing}; extracted: {found}')
+          print('Extracted native libraries:', ', '.join(sorted(found)))
+          PY
+
+      - name: Add preview diagnostic log
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('work/android/app/src/main/java/com/facefusion/mobile/MainActivity.kt')
+          s = p.read_text()
+          needle = 'ContentGate.inspectStill(frame).let { v ->'
+          log = '''ContentGate.inspectStill(frame).let { v ->
+                              android.util.Log.d(
+                                  "ffpreview",
+                                  "target gate verdict=${v.verdict} score=${v.score} " +
+                                      "sampled=${v.sampled} flagged=${v.flagged} detail=${v.detail}"
+                              )'''
+          if s.count(needle) != 1:
+              raise SystemExit(f'Expected one diagnostic insertion point; found {s.count(needle)}')
+          p.write_text(s.replace(needle, log, 1))
+          PY
+
+      - name: Build debug APK
+        working-directory: work/android
+        run: ./gradlew :app:assembleDebug -PprebuiltNativeDir="$GITHUB_WORKSPACE/native-libraries"
+
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: FaceFusion-Debug-APK
+          path: work/android/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
