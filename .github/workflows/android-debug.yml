@@ -19,8 +19,13 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      - 
       - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+        uses:
+        android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+
 
       - name: Install Android SDK components
         run: sdkmanager 'platforms;android-35' 'build-tools;34.0.0'
@@ -29,13 +34,13 @@ jobs:
         run: |
           python3 - <<'PY'
           import json, urllib.request, zipfile, pathlib
-          api = 'https://api.github.com/repos/AbrahamPaulJ/facefusion-mobile/releases/tags/v0.9.34'
+          api = 'https://api.github.com/repos/AbrahamPaulJ/facefusion-mobile/releases/tags/v0.9.0'
           req = urllib.request.Request(api, headers={'User-Agent': 'FaceFusion-debug-build'})
           with urllib.request.urlopen(req) as r:
               release = json.load(r)
           assets = [a for a in release.get('assets', []) if a['name'].endswith('-release.apk')]
           if not assets:
-              raise SystemExit('No release APK asset found for v0.9.34')
+              raise SystemExit('No release APK asset found for v0.9.0')
           asset = assets[0]
           req = urllib.request.Request(asset['browser_download_url'], headers={'User-Agent': 'FaceFusion-debug-build'})
           with urllib.request.urlopen(req) as r, open('official.apk', 'wb') as f:
